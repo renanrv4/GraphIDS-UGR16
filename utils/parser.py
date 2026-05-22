@@ -37,6 +37,7 @@ class Parser(argparse.ArgumentParser):
                 "NF-CSE-CIC-IDS2018-v3",
                 "NF-UNSW-NB15-v2",
                 "NF-CSE-CIC-IDS2018-v2",
+                "UGR16-v3",
             ],
             help="Dataset to use for training, validation and testing",
         )
