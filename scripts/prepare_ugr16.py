@@ -19,6 +19,7 @@ cols = [
 
 print("Lendo dataset...")
 
+# Extraindo apenas 1000000 de linhas do dataset original por causa do tamanho do arquivo
 df = pd.read_csv(
     "data/ugr16/march.week3.csv",
     header=None,
@@ -58,6 +59,7 @@ df["Label"] = (df["label"] != "background").astype(int)
 
 print("Montando dataframe final...")
 
+# DataFrame final com todas as colunas convertidas
 final_df = pd.DataFrame({
     "IPV4_SRC_ADDR": df["src_ip"],
     "IPV4_DST_ADDR": df["dst_ip"],
