@@ -17,6 +17,7 @@ dependencies = [
     "pytest>=8.0.0",
     "wandb>=0.22.3",
     "pyyaml>=6.0",
+    "pyarrow>=24.0.0",
 ]
 
 [project.optional-dependencies]
