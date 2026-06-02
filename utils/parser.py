@@ -28,6 +28,53 @@ class Parser(argparse.ArgumentParser):
             default=24,
             help="Seed for reproducibility",
         )
+
+        # ----------------- NEW: hyperparameter tuning -----------------
+        self.add_argument(
+            "--tune",
+            action="store_true",
+            help="If true, run hyperparameter tuning (train+val only) before the final train+test.",
+        )
+        self.add_argument(
+            "--tune_space",
+            type=str,
+            default=None,
+            help="Path to a YAML file defining the hyperparameter search space for tuning.",
+        )
+        self.add_argument(
+            "--tune_trials",
+            type=int,
+            default=20,
+            help="Number of random trials to sample from the tuning search space.",
+        )
+        self.add_argument(
+            "--tune_seed",
+            type=int,
+            default=123,
+            help="Random seed used to sample hyperparameters during tuning.",
+        )
+        self.add_argument(
+            "--tune_metric",
+            type=str,
+            default="val_pr_auc",
+            choices=["val_pr_auc"],
+            help="Metric to maximize during tuning.",
+        )
+        # Optional: allow faster/cheaper tuning runs
+        self.add_argument(
+            "--tune_num_epochs",
+            type=int,
+            default=None,
+            help="Override num_epochs during tuning only (if set).",
+        )
+        self.add_argument(
+            "--tune_patience",
+            type=int,
+            default=None,
+            help="Override patience during tuning only (if set).",
+        )
+        # --------------------------------------------------------------
+
         self.add_argument(
             "--dataset",
             type=str,
