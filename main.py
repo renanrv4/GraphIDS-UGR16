@@ -45,7 +45,7 @@ EXPERIMENT_CONFIG_KEYS = (
     "positional_encoding",
     "fraction",
     "split_mode",
-    "distribution_segment",
+    "distribution_segment"
 )
 RUNTIME_CONFIG_KEYS = (
     "data_dir",
@@ -165,7 +165,6 @@ def _run_train_val_once(run, *, dataset, train_loader, val_loader, checkpoint_su
     Returns: (best_val_pr_auc, trained_model, threshold, checkpoint_path)
     """
     config = run.config
-    set_seed(config.seed)
 
     ndim_in = dataset.num_node_features
     edim_in = dataset.num_edge_features
@@ -209,36 +208,6 @@ def _run_train_val_once(run, *, dataset, train_loader, val_loader, checkpoint_su
     if checkpoint_dir:
         os.makedirs(checkpoint_dir, exist_ok=True)
 
-    # shuffle = config.positional_encoding == "None"
-    # fanout_list = [config.fanout] if config.fanout != -1 else [-1]
-    # cpu_count = os.cpu_count()
-    # recommended_workers = min(cpu_count, 6) if cpu_count is not None else 0
-
-    # train_loader = LinkNeighborLoader(
-    #     data=dataset.train_graph,
-    #     num_neighbors=fanout_list,
-    #     edge_label_index=dataset.train_graph.edge_index,
-    #     edge_label=dataset.train_graph.edge_labels,
-    #     batch_size=config.batch_size,
-    #     shuffle=shuffle,
-    #     num_workers=recommended_workers,
-    #     pin_memory=True,
-    #     persistent_workers=True,
-    #     drop_last=True,
-    # )
-    # val_loader = LinkNeighborLoader(
-    #     data=dataset.val_graph,
-    #     num_neighbors=fanout_list,
-    #     edge_label_index=dataset.val_graph.edge_index,
-    #     edge_label=dataset.val_graph.edge_labels,
-    #     batch_size=config.batch_size,
-    #     shuffle=shuffle,
-    #     num_workers=recommended_workers,
-    #     pin_memory=True,
-    #     persistent_workers=True,
-    #     drop_last=True,
-    # )
-
     print("Starting training (train+val)...")
     start_epoch = 0
     model, threshold, best_val_pr_auc = train(
@@ -257,28 +226,16 @@ def _run_train_val_once(run, *, dataset, train_loader, val_loader, checkpoint_su
         device=device,
     )
 
-    # train() logs val_pr_auc during training, but we also want a scalar to compare trials.
-    # Simplest: read the last logged val_pr_auc from run history isn't available here.
-    # So we rely on the fact that the checkpoint saved is tied to best val PR-AUC,
-    # and train() loads best checkpoint at end (see utils/trainers.py) and returns it.
-    #
-    # We'll compute PR-AUC on validation one final time by reusing the validate routine indirectly:
-    # easiest without importing validate: run test() against val_loader-like semantics isn't supported.
-    #
-    # Minimal approach: use run.summary if W&B online; offline this isn't.
-    # So we choose a deterministic proxy: set best_val_pr_auc from the last metric logged into run,
-    # by having train() log it; W&B stores it in run._history (private) not safe.
-    #
-    # Practical approach: during tuning, we use W&B and inspect "val_pr_auc" from the log files.
-    #
-    # To keep this code self-contained, we return NaN and still store best config in run.config.
     return best_val_pr_auc, model, threshold, checkpoint
 
 
 def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
     if not args.tune_space:
         raise ValueError("--tune requires --tune_space <path.yaml>")
-
+    base_config_dict = dict(base_config_dict)
+    if not isinstance(base_config_dict, dict):
+        raise ValueError("base_config_dict must be a dict")
+    
     with open(args.tune_space, "r", encoding="utf-8") as f:
         space = yaml.safe_load(f)
     if not isinstance(space, dict):
@@ -289,8 +246,8 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
     best_overrides = None
     best_score = -float("inf")
 
-    shuffle = config.positional_encoding == "None"
-    fanout_list = [config.fanout] if config.fanout != -1 else [-1]
+    shuffle = base_config_dict["positional_encoding"] == "None"
+    fanout_list = [base_config_dict["fanout"]] if base_config_dict["fanout"] != -1 else [-1]
     cpu_count = os.cpu_count()
     recommended_workers = min(cpu_count, 6) if cpu_count is not None else 0
     
@@ -299,7 +256,7 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
         num_neighbors=fanout_list,
         edge_label_index=dataset.train_graph.edge_index,
         edge_label=dataset.train_graph.edge_labels,
-        batch_size=config.batch_size,
+        batch_size=base_config_dict["batch_size"],
         shuffle=shuffle,
         num_workers=recommended_workers,
         pin_memory=True,
@@ -311,7 +268,7 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
         num_neighbors=fanout_list,
         edge_label_index=dataset.val_graph.edge_index,
         edge_label=dataset.val_graph.edge_labels,
-        batch_size=config.batch_size,
+        batch_size=base_config_dict["batch_size"],
         shuffle=shuffle,
         num_workers=recommended_workers,
         pin_memory=True,
@@ -346,7 +303,7 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
 
         # Run training (train+val). NOTE: best_val_pr_auc is NaN in this minimal implementation.
         score, _, _, _ = _run_train_val_once(
-            trial_run, dataset, train_loader, val_loader, checkpoint_suffix=f"trial{trial}"
+            trial_run, dataset=dataset, train_loader=train_loader, val_loader=val_loader, checkpoint_suffix=f"trial{trial}"
         )
 
         print(
@@ -366,22 +323,129 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
 
         print(f"[tuning] trial {trial}/{args.tune_trials} overrides={overrides} score={score}")
 
-    # Fallback: if we couldn't compute scores programmatically, just return the last sampled overrides
-    if best_overrides is None:
-        print(
-            "[tuning] Could not compute val_pr_auc score in-code; "
-            "falling back to the last sampled configuration. "
-            "For proper selection, extend trainers.py to return best val_pr_auc."
-        )
-        best_overrides = overrides  # last trial
-
     print(f"[tuning] best_overrides={best_overrides} best_score={best_score}")
-    return best_overrides
+    return best_overrides, train_loader, val_loader
 # -------------------------------------------------------------------
 
-
-def main(run, tune):
+def train_model(run, dataset, tune, train_loader, val_loader):
     config = run.config
+
+    ndim_in = dataset.num_node_features
+    edim_in = dataset.num_edge_features
+
+    print("Number of features:", edim_in)
+
+    model = GraphIDS(
+        ndim_in=ndim_in,
+        edim_in=edim_in,
+        edim_out=config.edim_out,
+        embed_dim=config.ae_embedding_dim,
+        num_heads=4,
+        num_layers=config.num_layers,
+        window_size=config.window_size,
+        dropout=config.dropout,
+        ae_dropout=config.ae_dropout,
+        positional_encoding=config.positional_encoding,
+        agg_type=config.agg_type,
+        mask_ratio=config.mask_ratio,
+    ).to(device)
+
+    optimizer = torch.optim.AdamW(
+        [
+            {
+                "params": model.encoder.parameters(),
+                "weight_decay": config.weight_decay,
+            },
+            {
+                "params": model.transformer.parameters(),
+                "weight_decay": config.ae_weight_decay,
+            },
+        ],
+        lr=config.learning_rate,
+    )
+
+    checkpoint = resolve_checkpoint_path(config, run.name)
+
+    if os.path.exists(checkpoint):
+        print("Loading model from checkpoint")
+        start_epoch, threshold = model.load_checkpoint(
+            checkpoint,
+            optimizer,
+        )
+        run.config.epoch = start_epoch
+    else:
+        checkpoint_dir = os.path.dirname(checkpoint)
+        if checkpoint_dir:
+            os.makedirs(checkpoint_dir, exist_ok=True)
+
+        start_epoch = 0
+        threshold = None
+
+    shuffle = config.positional_encoding == "None"
+    fanout_list = [config.fanout] if config.fanout != -1 else [-1]
+
+    cpu_count = os.cpu_count()
+    recommended_workers = min(cpu_count, 6) if cpu_count is not None else 0
+
+    if not tune:
+        train_loader = LinkNeighborLoader(
+            data=dataset.train_graph,
+            num_neighbors=fanout_list,
+            edge_label_index=dataset.train_graph.edge_index,
+            edge_label=dataset.train_graph.edge_labels,
+            batch_size=config.batch_size,
+            shuffle=shuffle,
+            num_workers=recommended_workers,
+            pin_memory=True,
+            persistent_workers=True,
+            drop_last=True,
+        )
+
+        val_loader = LinkNeighborLoader(
+            data=dataset.val_graph,
+            num_neighbors=fanout_list,
+            edge_label_index=dataset.val_graph.edge_index,
+            edge_label=dataset.val_graph.edge_labels,
+            batch_size=config.batch_size,
+            shuffle=shuffle,
+            num_workers=recommended_workers,
+            pin_memory=True,
+            persistent_workers=True,
+            drop_last=True,
+        )
+
+    print("Starting training...")
+
+    model, threshold, best_val_pr_auc = train(
+        model,
+        config.window_size,
+        config.step_percent,
+        config.ae_batch_size,
+        train_loader,
+        val_loader,
+        start_epoch,
+        config.num_epochs,
+        optimizer,
+        run,
+        config.patience,
+        checkpoint,
+        device=device,
+    )
+
+    return (
+        model,
+        threshold,
+        start_epoch,
+        fanout_list,
+        shuffle,
+        recommended_workers,
+        best_val_pr_auc,
+    )
+
+
+def main(run, args):
+    config = run.config
+    print(config)
 
     set_seed(config.seed)
     split_mode = config.split_mode
@@ -398,109 +462,47 @@ def main(run, tune):
         distribution_segment=distribution_segment,
     )
 
-    if tune:
-        base_cfg_dict = config if isinstance(config, dict) else {key: getattr(args, key) for key in EXPERIMENT_CONFIG_KEYS}
-        best_overrides = tune_hyperparameters(args, dataset, base_cfg_dict)
+    if args.tune:
+        best_overrides, train_loader, val_loader = tune_hyperparameters(args, dataset, config)
+        config = build_wandb_config(args)
 
-        # Apply best overrides to the final run's config
-        if isinstance(config, dict):
-            config.update(best_overrides)
-        else:
-            # shouldn't happen after the YAML load above, but kept for safety
-            config = {key: getattr(args, key) for key in EXPERIMENT_CONFIG_KEYS}
-            config.update(best_overrides)
-    else:
-        ndim_in = dataset.num_node_features
-        edim_in = dataset.num_edge_features
-        print("Number of features:", edim_in)
+        if isinstance(config, str):
+            with open(config, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
 
-        model = GraphIDS(
-            ndim_in=ndim_in,
-            edim_in=edim_in,
-            edim_out=config.edim_out,
-            embed_dim=config.ae_embedding_dim,
-            num_heads=4,
-            num_layers=config.num_layers,
-            window_size=config.window_size,
-            dropout=config.dropout,
-            ae_dropout=config.ae_dropout,
-            positional_encoding=config.positional_encoding,
-            agg_type=config.agg_type,
-            mask_ratio=config.mask_ratio,
-        ).to(device)
+            config = {
+                k: v["value"] if isinstance(v, dict) and "value" in v else v
+                for k, v in config.items()
+            }
 
-        optimizer = torch.optim.AdamW(
-            [
-                {  # Higher weight decay for embedding layer
-                    "params": model.encoder.parameters(),
-                    "weight_decay": config.weight_decay,
-                },
-                {  # Lower weight decay for the transformer
-                    "params": model.transformer.parameters(),
-                    "weight_decay": config.ae_weight_decay,
-                },
-            ],
-            lr=config.learning_rate,
+        config.update(best_overrides)
+
+        run = wandb.init(
+            project="GraphIDS",
+            config=config
         )
-        checkpoint = resolve_checkpoint_path(config, run.name)
-        if os.path.exists(checkpoint):
-            print("Loading model from checkpoint")
-            start_epoch, threshold = model.load_checkpoint(checkpoint, optimizer)
-            run.config.epoch = start_epoch
-        else:
-            checkpoint_dir = os.path.dirname(checkpoint)
-            if checkpoint_dir:
-                os.makedirs(checkpoint_dir, exist_ok=True)
-            start_epoch = 0
-            threshold = None
 
-        shuffle = config.positional_encoding == "None"
-        fanout_list = [config.fanout] if config.fanout != -1 else [-1]
-
-        if torch.cuda.is_available():
-            torch.cuda.reset_peak_memory_stats()
-        cpu_count = os.cpu_count()
-        recommended_workers = min(cpu_count, 6) if cpu_count is not None else 0
-        train_loader = LinkNeighborLoader(
-            data=dataset.train_graph,
-            num_neighbors=fanout_list,
-            edge_label_index=dataset.train_graph.edge_index,
-            edge_label=dataset.train_graph.edge_labels,
-            batch_size=config.batch_size,
-            shuffle=shuffle,
-            num_workers=recommended_workers,
-            pin_memory=True,
-            persistent_workers=True,
-            drop_last=True,
-        )
-        val_loader = LinkNeighborLoader(
-            data=dataset.val_graph,
-            num_neighbors=fanout_list,
-            edge_label_index=dataset.val_graph.edge_index,
-            edge_label=dataset.val_graph.edge_labels,
-            batch_size=config.batch_size,
-            shuffle=shuffle,
-            num_workers=recommended_workers,
-            pin_memory=True,
-            persistent_workers=True,
-            drop_last=True,
-        )
-        print("Starting training...")
-        model, threshold = train(
+        apply_cli_config(run.config, args)
+        ensure_config_keys(run.config)
+        (
             model,
-            config.window_size,
-            config.step_percent,
-            config.ae_batch_size,
-            train_loader,
-            val_loader,
+            threshold,
             start_epoch,
-            config.num_epochs,
-            optimizer,
-            run,
-            config.patience,
-            checkpoint,
-            device=device,
-        )
+            fanout_list,
+            shuffle,
+            recommended_workers,
+            _
+        ) = train_model(run, dataset, True, train_loader, val_loader)
+    else:
+        (
+            model,
+            threshold,
+            start_epoch,
+            fanout_list,
+            shuffle,
+            recommended_workers,
+            _
+        ) = train_model(run, dataset, False, None, None)
 
     if start_epoch >= config.num_epochs or config.test:
         print("Model already trained")
@@ -539,6 +541,7 @@ def main(run, tune):
         device,
         threshold=threshold,
     )
+
     precision, recall, _ = precision_recall_curve(test_labels.cpu(), errors.cpu())
     if config.save_curve:
         run.log(
@@ -591,37 +594,8 @@ if __name__ == "__main__":
     if not args.wandb:
         os.environ["WANDB_MODE"] = "offline"
 
-    # # If config is a YAML path, wandb.init will load it.
-    # # For tuning we need a dict, so when args.config is provided, we keep tuning disabled unless you parse YAML yourself.
-    # # Minimal: if args.tune and args.config is a file, we load it now into a dict.
-    # if args.tune and isinstance(config, str):
-    #     if args.tune and isinstance(config, str):
-    #         with open(config, "r", encoding="utf-8") as f:
-    #             config = yaml.safe_load(f)
-
-    #         config = {
-    #             key: value["value"]
-    #             if isinstance(value, dict) and "value" in value
-    #             else value
-    #             for key, value in config.items()
-    #         }
-
-    # # ------------------- NEW: optional tuning before final run -------------------
-    # if args.tune:
-    #     base_cfg_dict = config if isinstance(config, dict) else {key: getattr(args, key) for key in EXPERIMENT_CONFIG_KEYS}
-    #     best_overrides = tune_hyperparameters(args, base_cfg_dict)
-
-    #     # Apply best overrides to the final run's config
-    #     if isinstance(config, dict):
-    #         config.update(best_overrides)
-    #     else:
-    #         # shouldn't happen after the YAML load above, but kept for safety
-    #         config = {key: getattr(args, key) for key in EXPERIMENT_CONFIG_KEYS}
-    #         config.update(best_overrides)
-    # # ---------------------------------------------------------------------------
-
     run = wandb.init(project="GraphIDS", config=config)
     apply_cli_config(run.config, args)
     ensure_config_keys(run.config)
-
-    main(run)
+    
+    main(run, args)
