@@ -327,7 +327,14 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
     return best_overrides, train_loader, val_loader
 # -------------------------------------------------------------------
 
-def train_model(run, dataset, tune, train_loader, val_loader):
+def train_model(
+    run,
+    dataset,
+    tune,
+    resume_train,
+    train_loader=None,
+    val_loader=None,
+):
     config = run.config
 
     ndim_in = dataset.num_node_features
@@ -366,27 +373,37 @@ def train_model(run, dataset, tune, train_loader, val_loader):
 
     checkpoint = resolve_checkpoint_path(config, run.name)
 
-    if os.path.exists(checkpoint):
+    checkpoint_dir = os.path.dirname(checkpoint)
+    if checkpoint_dir:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+    # --------------------------------------------------
+    # Resume training apenas se solicitado
+    # --------------------------------------------------
+    if resume_train and os.path.exists(checkpoint):
         print("Loading model from checkpoint")
+
         start_epoch, threshold = model.load_checkpoint(
             checkpoint,
             optimizer,
         )
-        run.config.epoch = start_epoch
-    else:
-        checkpoint_dir = os.path.dirname(checkpoint)
-        if checkpoint_dir:
-            os.makedirs(checkpoint_dir, exist_ok=True)
 
+        run.config.epoch = start_epoch
+
+    else:
         start_epoch = 0
         threshold = None
 
+    # --------------------------------------------------
+    # Configuração dos loaders
+    # --------------------------------------------------
     shuffle = config.positional_encoding == "None"
     fanout_list = [config.fanout] if config.fanout != -1 else [-1]
 
     cpu_count = os.cpu_count()
     recommended_workers = min(cpu_count, 6) if cpu_count is not None else 0
 
+    # Se não veio da etapa de tuning, cria os loaders
     if not tune:
         train_loader = LinkNeighborLoader(
             data=dataset.train_graph,
@@ -492,7 +509,7 @@ def main(run, args):
             shuffle,
             recommended_workers,
             _
-        ) = train_model(run, dataset, True, train_loader, val_loader)
+        ) = train_model(run, dataset, True, False, train_loader, val_loader)
     else:
         (
             model,
@@ -502,7 +519,7 @@ def main(run, args):
             shuffle,
             recommended_workers,
             _
-        ) = train_model(run, dataset, False, None, None)
+        ) = train_model(run, dataset, False, True, None, None)
 
     if start_epoch >= config.num_epochs or config.test:
         print("Model already trained")
