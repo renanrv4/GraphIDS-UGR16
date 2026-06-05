@@ -111,7 +111,7 @@ def train(
             break
     chk = torch.load(checkpoint, weights_only=True)
     model.load_state_dict(chk["model_state_dict"])
-    return model, chk["threshold"]
+    return model, chk["threshold"], val_pr_auc
 
 
 def find_threshold(errors, labels=None, method="unsupervised", multiplier=10.0):
