@@ -501,6 +501,7 @@ def main(run, args):
 
         apply_cli_config(run.config, args)
         ensure_config_keys(run.config)
+        config = run.config
         (
             model,
             threshold,
