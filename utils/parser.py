@@ -85,6 +85,8 @@ class Parser(argparse.ArgumentParser):
                 "NF-UNSW-NB15-v2",
                 "NF-CSE-CIC-IDS2018-v2",
                 "UGR16-v3",
+                "ADFA-LD-GraphIDS",
+                "ADFA-LD-h2h"
             ],
             help="Dataset to use for training, validation and testing",
         )

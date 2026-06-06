@@ -1,6 +1,9 @@
 import pandas as pd
 
+# ==========================
 # Colunas originais do UGR16
+# ==========================
+
 cols = [
     "timestamp",
     "duration",
@@ -17,15 +20,21 @@ cols = [
     "label",
 ]
 
-print("Lendo dataset...")
-
 # Extraindo apenas 1000000 de linhas do dataset original por causa do tamanho do arquivo
+# UGR16: https://nesg.ugr.es/nesg-ugr16/
 df = pd.read_csv("data/ugr16/march.week3.csv", header=None, names=cols, nrows=1_000_000)
 
 print("Convertendo timestamps...")
 
+# ==========================
 # Timestamp -> epoch milliseconds
+# ==========================
+
 df["FLOW_START_MILLISECONDS"] = pd.to_datetime(df["timestamp"]).astype("int64") // 10**6
+
+# ==========================
+# Mapeando protocolos
+# ==========================
 
 print("Convertendo protocolos...")
 
@@ -35,20 +44,32 @@ df["PROTOCOL"] = df["protocol"].map(proto_map)
 
 print("Convertendo flags...")
 
+# ==========================
 # Encoding simples para flags
+# ==========================
+
 df["TCP_FLAGS"] = pd.factorize(df["flags"])[0]
 
 print("Criando labels...")
 
+# ==========================
 # Attack textual
+# ==========================
+
 df["Attack"] = df["label"]
 
+# ==========================
 # Label binário
+# ==========================
+
 df["Label"] = (df["label"] != "background").astype(int)
 
 print("Montando dataframe final...")
 
+# ==========================
 # DataFrame final com todas as colunas convertidas
+# ==========================
+
 final_df = pd.DataFrame(
     {
         "IPV4_SRC_ADDR": df["src_ip"],
@@ -69,6 +90,10 @@ final_df = pd.DataFrame(
 )
 
 print(final_df.head())
+
+# ==========================
+# SAVE
+# ==========================
 
 print("Salvando dataset convertido...")
 
