@@ -1,4 +1,5 @@
 from pathlib import Path
+
 import pandas as pd
 
 # ADFA-LD: https://github.com/verazuo/a-labelled-version-of-the-ADFA-LD-dataset/blob/master/ADFA-LD%2BSyscall%2BList.txt
@@ -10,8 +11,9 @@ rows = []
 ts = 0
 
 # ==========================
-# PROCESSANDO ENTRADAS
+# PROCESSING ENTRIES
 # ==========================
+
 
 def process_sequence(seq, label, attack_name):
     global ts
@@ -24,7 +26,6 @@ def process_sequence(seq, label, attack_name):
         return
 
     for i in range(trace_length - 1):
-
         src = seq[i]
         dst = seq[i + 1]
 
@@ -34,21 +35,17 @@ def process_sequence(seq, label, attack_name):
         rows.append(
             {
                 "FLOW_START_MILLISECONDS": ts,
-                # trocar para src e dst para a abordagem system_calls como nós do grafo
-                "IPV4_SRC_ADDR": FIX_HOST, # src
-                "IPV4_DST_ADDR": FIX_DST, # dst
-
+                # change to src and dst IPs to use system_calls as nodes to GNN, since ADFA-LD is a single host dataset
+                "IPV4_SRC_ADDR": FIX_HOST,  # src - source ip
+                "IPV4_DST_ADDR": FIX_DST,  # dst - destination ip
                 # edge features
                 "src_syscall": src,
                 "dst_syscall": dst,
                 "prev_syscall": prev_syscall,
                 "next_syscall": next_syscall,
-
                 "position": i,
                 "trace_length": trace_length,
-
                 "count": 1,
-
                 "Label": label,
                 "Attack": attack_name,
             }
@@ -58,13 +55,12 @@ def process_sequence(seq, label, attack_name):
 
 
 # ==========================
-# ARQUIVOS DE TREINAMENTO - BENIGNO
+# TRAINING FILES - BENIGN
 # ==========================
 
-print("Processando arquivos de treinamento")
+print("Processing training files")
 
 for file in (ROOT / "Training_Data_Master").glob("*.txt"):
-
     seq = file.read_text().strip().split()
 
     process_sequence(
@@ -75,13 +71,12 @@ for file in (ROOT / "Training_Data_Master").glob("*.txt"):
 
 
 # ==========================
-# ARQUIVOS DE VALIDAÇÃO - BENIGNO
+# VALIDATION FILES - BENIGN
 # ==========================
 
-print("Processando arquivos de validação")
+print("Processing validation files")
 
 for file in (ROOT / "Validation_Data_Master").glob("*.txt"):
-
     seq = file.read_text().strip().split()
 
     process_sequence(
@@ -92,13 +87,12 @@ for file in (ROOT / "Validation_Data_Master").glob("*.txt"):
 
 
 # ==========================
-# ATAQUES
+# ATTACK FILES - MALICIOUS
 # ==========================
 
-print("Processando arquivos de ataque")
+print("Processing attack files")
 
 for file in (ROOT / "Attack_Data_Master").rglob("*.txt"):
-
     attack_type = file.parent.name
 
     seq = file.read_text().strip().split()
@@ -116,18 +110,17 @@ for file in (ROOT / "Attack_Data_Master").rglob("*.txt"):
 
 df = pd.DataFrame(rows)
 
-# MUDAR CAMINHO DE SAÍDA
-outdir = Path(
-    "/home/CIN/rsc8/GraphIDS/data/ADFA-LD-h2h"
-)
+# CHANGE OUTPUT PATH BELOW TO YOUR OWN
+outdir = Path("/home/CIN/rsc8/GraphIDS/data/ADFA-LD-h2h")
 
 outdir.mkdir(parents=True, exist_ok=True)
 
+# CSV FILE WITH ALL PROCESSED DATA
 outfile = outdir / "ADFA-LD-h2h.csv"
 
 df.to_csv(outfile, index=False)
 
-print("\ndataset criado")
+print("\nSaved processed dataset to:")
 print(outfile)
 
 print("\nshape:")
@@ -136,5 +129,5 @@ print(df.shape)
 print("\nlabels:")
 print(df["Label"].value_counts())
 
-print("\nataques:")
+print("\nattacks:")
 print(df["Attack"].value_counts().head(20))
