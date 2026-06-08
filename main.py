@@ -45,7 +45,7 @@ EXPERIMENT_CONFIG_KEYS = (
     "positional_encoding",
     "fraction",
     "split_mode",
-    "distribution_segment"
+    "distribution_segment",
 )
 RUNTIME_CONFIG_KEYS = (
     "data_dir",
@@ -159,7 +159,9 @@ def _apply_trial_overrides(base_config, overrides: dict):
         base_config[k] = v
 
 
-def _run_train_val_once(run, *, dataset, train_loader, val_loader, checkpoint_suffix: str | None = None):
+def _run_train_val_once(
+    run, *, dataset, train_loader, val_loader, checkpoint_suffix: str | None = None
+):
     """
     Runs train+val (and will still construct test_loader, but we can avoid calling test()).
     Returns: (best_val_pr_auc, trained_model, threshold, checkpoint_path)
@@ -235,8 +237,8 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
     base_config_dict = dict(base_config_dict)
     if not isinstance(base_config_dict, dict):
         raise ValueError("base_config_dict must be a dict")
-    
-    with open(args.tune_space, "r", encoding="utf-8") as f:
+
+    with open(args.tune_space, encoding="utf-8") as f:
         space = yaml.safe_load(f)
     if not isinstance(space, dict):
         raise ValueError("tune_space YAML must be a mapping of hyperparameter -> spec")
@@ -247,10 +249,12 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
     best_score = -float("inf")
 
     shuffle = base_config_dict["positional_encoding"] == "None"
-    fanout_list = [base_config_dict["fanout"]] if base_config_dict["fanout"] != -1 else [-1]
+    fanout_list = (
+        [base_config_dict["fanout"]] if base_config_dict["fanout"] != -1 else [-1]
+    )
     cpu_count = os.cpu_count()
     recommended_workers = min(cpu_count, 6) if cpu_count is not None else 0
-    
+
     train_loader = LinkNeighborLoader(
         data=dataset.train_graph,
         num_neighbors=fanout_list,
@@ -303,14 +307,14 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
 
         # Run training (train+val). NOTE: best_val_pr_auc is NaN in this minimal implementation.
         score, _, _, _ = _run_train_val_once(
-            trial_run, dataset=dataset, train_loader=train_loader, val_loader=val_loader, checkpoint_suffix=f"trial{trial}"
+            trial_run,
+            dataset=dataset,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            checkpoint_suffix=f"trial{trial}",
         )
 
-        print(
-            f"[tuning] trial={trial} "
-            f"val_pr_auc={score:.6f} "
-            f"params={overrides}"
-        )
+        print(f"[tuning] trial={trial} val_pr_auc={score:.6f} params={overrides}")
 
         # If you want a real numeric comparison without depending on W&B internals,
         # you can extend utils/trainers.py to return best_val_pr_auc directly and use it here.
@@ -321,11 +325,16 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
 
         trial_run.finish()
 
-        print(f"[tuning] trial {trial}/{args.tune_trials} overrides={overrides} score={score}")
+        print(
+            f"[tuning] trial {trial}/{args.tune_trials} overrides={overrides} score={score}"
+        )
 
     print(f"[tuning] best_overrides={best_overrides} best_score={best_score}")
     return best_overrides, train_loader, val_loader
+
+
 # -------------------------------------------------------------------
+
 
 def train_model(
     run,
@@ -480,11 +489,13 @@ def main(run, args):
     )
 
     if args.tune:
-        best_overrides, train_loader, val_loader = tune_hyperparameters(args, dataset, config)
+        best_overrides, train_loader, val_loader = tune_hyperparameters(
+            args, dataset, config
+        )
         config = build_wandb_config(args)
 
         if isinstance(config, str):
-            with open(config, "r", encoding="utf-8") as f:
+            with open(config, encoding="utf-8") as f:
                 config = yaml.safe_load(f)
 
             config = {
@@ -494,10 +505,7 @@ def main(run, args):
 
         config.update(best_overrides)
 
-        run = wandb.init(
-            project="GraphIDS",
-            config=config
-        )
+        run = wandb.init(project="GraphIDS", config=config)
 
         apply_cli_config(run.config, args)
         ensure_config_keys(run.config)
@@ -509,7 +517,7 @@ def main(run, args):
             fanout_list,
             shuffle,
             recommended_workers,
-            _
+            _,
         ) = train_model(run, dataset, True, False, train_loader, val_loader)
     else:
         (
@@ -519,7 +527,7 @@ def main(run, args):
             fanout_list,
             shuffle,
             recommended_workers,
-            _
+            _,
         ) = train_model(run, dataset, False, True, None, None)
 
     if start_epoch >= config.num_epochs or config.test:
@@ -541,7 +549,9 @@ def main(run, args):
             data=dataset.test_graph,
             num_neighbors=fanout_list,
             edge_label_index=dataset.test_graph.edge_index,
-            edge_label=dataset.test_graph.edge.edge_labels if hasattr(dataset.test_graph, "edge") else dataset.test_graph.edge_labels,  # keep compatibility
+            edge_label=dataset.test_graph.edge.edge_labels
+            if hasattr(dataset.test_graph, "edge")
+            else dataset.test_graph.edge_labels,  # keep compatibility
             batch_size=config.batch_size,
             shuffle=shuffle,
             num_workers=recommended_workers,
@@ -615,5 +625,5 @@ if __name__ == "__main__":
     run = wandb.init(project="GraphIDS", config=config)
     apply_cli_config(run.config, args)
     ensure_config_keys(run.config)
-    
+
     main(run, args)
