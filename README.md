@@ -8,8 +8,6 @@
 
 ## Citation
 
-If you find this work useful in your research, please consider citing our paper:
-
 ```bibtex
 @inproceedings{guerra2025selfsupervised,
   author = {Guerra, Lorenzo and Chapuis, Thomas and Duc, Guillaume and Mozharovskyi, Pavlo and Nguyen, Van-Tam},
@@ -22,7 +20,3 @@ If you find this work useful in your research, please consider citing our paper:
   year = {2025}
 }
 ```
-
-## License
-
-All original components of this repository are licensed under the [Apache License 2.0](./LICENSE). Third-party components are used in compliance with their respective licenses.
