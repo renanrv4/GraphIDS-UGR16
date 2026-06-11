@@ -1,7 +1,7 @@
 data_type:
   value: benign
 dataset:
-  value: NF-CSE-CIC-IDS2018-v3
+  value: NF-ToN-IoT-v2
 num_epochs:
   value: 100
 learning_rate:
@@ -32,47 +32,6 @@ step_percent:
   value: 1.0
 ae_embedding_dim:
   value: 32
-ae_dropout:
-  value: 0.2
-dropout:
-  value: 0.5
-positional_encoding:
-  value: None
-fraction:
-  value: 0.2data_type:
-  value: benign
-dataset:
-  value: NF-CSE-CIC-IDS2018-v3
-num_epochs:
-  value: 100
-learning_rate:
-  value: 0.00020209750512571286
-weight_decay:
-  value: 0.1
-ae_weight_decay:
-  value: 0.01
-edim_out:
-  value: 64
-batch_size:
-  value: 16384
-fanout:
-  value: 32768
-agg_type:
-  value: mean
-num_layers:
-  value: 1
-mask_ratio:
-  value: 0.3
-patience:
-  value: 20
-ae_batch_size:
-  value: 64
-window_size:
-  value: 1024
-step_percent:
-  value: 1.0
-ae_embedding_dim:
-  value: 64
 ae_dropout:
   value: 0.2
 dropout:
