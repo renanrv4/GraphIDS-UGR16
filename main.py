@@ -317,9 +317,6 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
 
         print(f"[tuning] trial={trial} val_pr_auc={score:.6f} params={overrides}")
 
-        # If you want a real numeric comparison without depending on W&B internals,
-        # you can extend utils/trainers.py to return best_val_pr_auc directly and use it here.
-        # For now, we will compare using "score" only if it's a number.
         if not np.isnan(score) and score > best_score:
             best_score = score
             best_overrides = overrides
@@ -389,9 +386,9 @@ def train_model(
     if checkpoint_dir:
         os.makedirs(checkpoint_dir, exist_ok=True)
 
-    # --------------------------------------------------
+    # ==================================================
     # Resume training only when called
-    # --------------------------------------------------
+    # ==================================================
     if resume_train and os.path.exists(checkpoint):
         print("Loading model from checkpoint")
 
@@ -406,9 +403,9 @@ def train_model(
         start_epoch = 0
         threshold = None
 
-    # --------------------------------------------------
+    # ==================================================
     # Load config
-    # --------------------------------------------------
+    # ==================================================
     shuffle = config.positional_encoding == "None"
     fanout_list = [config.fanout] if config.fanout != -1 else [-1]
 
