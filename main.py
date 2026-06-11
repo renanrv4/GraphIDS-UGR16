@@ -109,7 +109,9 @@ def resolve_checkpoint_path(config, run_name):
     return default_checkpoint_path(config, run_name)
 
 
-# ------------------------ NEW: tuning helpers ------------------------
+# =========================
+# NEW TUNING HELPERS    
+# =========================
 def _sample_from_space(space: dict, rng: random.Random) -> dict:
     """
     space YAML format example:
@@ -144,7 +146,6 @@ def _sample_from_space(space: dict, rng: random.Random) -> dict:
         else:
             raise ValueError(f"Unknown search space type for '{key}': {stype}")
     return sampled
-
 
 def _apply_trial_overrides(base_config, overrides: dict):
     """
@@ -333,8 +334,10 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
     return best_overrides, train_loader, val_loader
 
 
-# -------------------------------------------------------------------
 
+# =========================
+# TRAINER HELPER
+# =========================
 
 def train_model(
     run,
@@ -387,7 +390,7 @@ def train_model(
         os.makedirs(checkpoint_dir, exist_ok=True)
 
     # --------------------------------------------------
-    # Resume training apenas se solicitado
+    # Resume training only when called
     # --------------------------------------------------
     if resume_train and os.path.exists(checkpoint):
         print("Loading model from checkpoint")
@@ -404,7 +407,7 @@ def train_model(
         threshold = None
 
     # --------------------------------------------------
-    # Configuração dos loaders
+    # Load config
     # --------------------------------------------------
     shuffle = config.positional_encoding == "None"
     fanout_list = [config.fanout] if config.fanout != -1 else [-1]
@@ -412,7 +415,6 @@ def train_model(
     cpu_count = os.cpu_count()
     recommended_workers = min(cpu_count, 6) if cpu_count is not None else 0
 
-    # Se não veio da etapa de tuning, cria os loaders
     if not tune:
         train_loader = LinkNeighborLoader(
             data=dataset.train_graph,
