@@ -2,9 +2,60 @@
 
 # Self-Supervised Learning of Graph Representations for Network Intrusion Detection
 
+This repository is based on the original implementation of **GraphIDS** presented in the paper *Self-Supervised Learning of Graph Representations for Network Intrusion Detection*. The goal of this project is to reproduce the results reported by the authors, evaluate the model on additional datasets.
+
 <p align="center">
   <img src="figures/full_pipeline.png" alt="Graph representation learning process">
 </p>
+
+## Repository Structure
+
+### `config_search_space/`
+
+Contains the hyperparameter search space definitions used during tuning experiments.
+
+- `tuning_space.yaml`: defines the range of values explored during hyperparameter optimization (e.g., learning rate, weight decay , mask ratio, window size, etc.).
+
+### `configs/`
+
+Contains dataset-specific configuration files.
+
+New configuration files were added to support the additional datasets evaluated in this project, allowing experiments to be executed using the same training pipeline adopted by GraphIDS.
+
+New configuration files:
+
+```bash
+ADFA-LD-GraphIDS.yaml
+ADFA-LD-h2h.yaml
+NF-ToN-IoT-v2.yaml
+NF-ToN-IoT-v3.yaml
+```
+
+### `scripts/`
+
+Contains dataset preprocessing utilities.
+
+These scripts are responsible for converting raw datasets into the format required by GraphIDS, including feature extraction, graph construction, and dataset-specific transformations.
+
+### `utils/parser.py`
+
+Extended to support hyperparameter tuning through the following command-line arguments:
+
+```bash
+--tune
+--tune_space
+--tune_trials
+--tune_seed
+--tune_metric
+--tune_num_epochs
+--tune_patience
+```
+
+## Reproducibility
+
+For detailed instructions on reproducing the experiments reported in the original paper, including environment setup, dataset preparation, and training commands, please refer to the official GraphIDS repository.
+
+The modifications introduced in this repository are fully compatible with the original training pipeline. Additional experiments can be performed using the new configuration files available in configs/, the preprocessing scripts in scripts/, and the hyperparameter tuning functionality described above.
 
 ## Citation
 
