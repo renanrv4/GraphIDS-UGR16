@@ -86,6 +86,8 @@ class Parser(argparse.ArgumentParser):
                 "NF-CSE-CIC-IDS2018-v2",
                 "ADFA-LD-GraphIDS",
                 "ADFA-LD-h2h",
+                "NF-ToN-IoT-v2",
+                "NF-ToN-IoT-v3"
             ],
             help="Dataset to use for training, validation and testing",
         )
