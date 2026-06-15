@@ -7,9 +7,6 @@ requires-python = ">=3.11"
 dependencies = [
     "torch==2.8.0",
     "torch-geometric==2.7.0",
-    "torchaudio==2.8.0",
-    "torchvision==0.23.0",
-    "pyg_lib",
     "scikit-learn>=1.7.2",
     "numpy>=2.3.4",
     "scipy>=1.16.3",
@@ -18,6 +15,8 @@ dependencies = [
     "wandb>=0.22.3",
     "pyyaml>=6.0",
     "pyarrow>=24.0.0",
+    "matplotlib>=3.11.0",
+    "kagglehub>=1.0.2",
 ]
 
 [project.optional-dependencies]
@@ -26,14 +25,6 @@ dev = [
     "ruff>=0.14.0",
     "ty",
 ]
-
-[tool.uv.sources]
-pyg_lib = [ { index = "pyg" } ]
-
-[[tool.uv.index]]
-name = "pyg"
-url = "https://data.pyg.org/whl/torch-2.8.0+cu128.html"
-format = "flat"
 
 [tool.ruff]
 line-length = 88
@@ -78,3 +69,4 @@ filterwarnings = [
     "ignore:Failing to pass a value to the 'type_params' parameter of 'typing\\._eval_type' is deprecated:DeprecationWarning",
     "ignore:The PyTorch API of nested tensors is in prototype stage:UserWarning",
 ]
+

@@ -1,0 +1,44 @@
+learning_rate:
+  type: loguniform
+  min: 1e-4
+  max: 3e-3
+
+ae_embedding_dim:
+  type: choice
+  values: [16, 32, 64]
+
+edim_out:
+  type: choice
+  values: [8, 16, 32]
+
+num_layers:
+  type: int
+  min: 1
+  max: 3
+
+dropout:
+  type: uniform
+  min: 0.0
+  max: 0.3
+
+mask_ratio:
+  type: uniform
+  min: 0.0
+  max: 0.3
+
+window_size:
+  type: choice
+  values: [64, 128, 256]
+
+batch_size:
+  type: choice
+  values: [8192, 16384, 32768]
+
+ae_batch_size:
+  type: choice
+  values: [32, 64, 128]
+
+step_percent:
+  type: uniform
+  min: 0.25
+  max: 1.0

@@ -97,6 +97,7 @@ def train(
             cnt_wait = 0
         else:
             cnt_wait += 1
+        print(f"EPOCH: {epoch}/{num_epochs} | train_loss={total_train_loss:.6f} | val_loss={val_loss:.6f} | val_pr_auc={val_pr_auc:.6f} | best_val_pr_auc={best_pr_auc:.6f}")
         pbar.set_postfix(
             {
                 "train_loss": total_train_loss,

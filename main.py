@@ -10,6 +10,9 @@ import yaml
 from sklearn.metrics import f1_score, precision_recall_curve
 from torch_geometric.loader import LinkNeighborLoader
 
+import patch_pyg
+patch_pyg.apply()
+
 from models.graphids import GraphIDS
 from utils.dataloaders import NetFlowDataset, StreamingNetFlowDataset
 from utils.parser import Parser
@@ -259,8 +262,6 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
     fanout_list = (
         [base_config_dict["fanout"]] if base_config_dict["fanout"] != -1 else [-1]
     )
-    cpu_count = os.cpu_count()
-    recommended_workers = min(cpu_count, 6) if cpu_count is not None else 0
 
     train_loader = LinkNeighborLoader(
         data=dataset.train_graph,
@@ -269,9 +270,6 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
         edge_label=dataset.train_graph.edge_labels,
         batch_size=base_config_dict["batch_size"],
         shuffle=shuffle,
-        num_workers=recommended_workers,
-        pin_memory=True,
-        persistent_workers=True,
         drop_last=True,
     )
     val_loader = LinkNeighborLoader(
@@ -281,9 +279,6 @@ def tune_hyperparameters(args, dataset, base_config_dict: dict) -> dict:
         edge_label=dataset.val_graph.edge_labels,
         batch_size=base_config_dict["batch_size"],
         shuffle=shuffle,
-        num_workers=recommended_workers,
-        pin_memory=True,
-        persistent_workers=True,
         drop_last=True,
     )
 
@@ -415,8 +410,7 @@ def train_model(
     shuffle = config.positional_encoding == "None"
     fanout_list = [config.fanout] if config.fanout != -1 else [-1]
 
-    cpu_count = os.cpu_count()
-    recommended_workers = min(cpu_count, 6) if cpu_count is not None else 0
+    recommended_workers = 0
 
     if not tune:
         train_loader = LinkNeighborLoader(
@@ -426,9 +420,6 @@ def train_model(
             edge_label=dataset.train_graph.edge_labels,
             batch_size=config.batch_size,
             shuffle=shuffle,
-            num_workers=recommended_workers,
-            pin_memory=True,
-            persistent_workers=True,
             drop_last=True,
         )
 
@@ -439,9 +430,6 @@ def train_model(
             edge_label=dataset.val_graph.edge_labels,
             batch_size=config.batch_size,
             shuffle=shuffle,
-            num_workers=recommended_workers,
-            pin_memory=True,
-            persistent_workers=True,
             drop_last=True,
         )
 
@@ -673,9 +661,6 @@ def main(run, args):
             edge_label=dataset.test_graph.edge_labels,
             batch_size=config.batch_size,
             shuffle=shuffle,
-            num_workers=recommended_workers,
-            pin_memory=True,
-            persistent_workers=True,
             drop_last=False,
         )
     else:
@@ -688,9 +673,6 @@ def main(run, args):
             else dataset.test_graph.edge_labels,  # keep compatibility
             batch_size=config.batch_size,
             shuffle=shuffle,
-            num_workers=recommended_workers,
-            pin_memory=True,
-            persistent_workers=True,
             drop_last=False,
         )
 
@@ -722,8 +704,8 @@ def main(run, args):
             recall=recall,
         )
     test_pred = (errors > threshold).int()
-    print(f"Test macro F1-score: {test_f1:.4f}")
-    print(f"Test PR-AUC: {test_pr_auc:.4f}")
+    print(f"FINAL_TEST_F1: {test_f1:.6f}")
+    print(f"FINAL_TEST_PR_AUC: {test_pr_auc:.6f}")
     print(f"Test prediction time: {prediction_time:.4f} seconds")
     if torch.cuda.is_available():
         peak_memory_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
