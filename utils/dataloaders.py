@@ -1,6 +1,7 @@
 import os
 import pickle
 import shutil
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -13,6 +14,7 @@ from torch_geometric.data import Data
 from torch_geometric.data.data import DataEdgeAttr, DataTensorAttr
 from torch_geometric.data.storage import GlobalStorage
 
+from utils.dynamic_graph import DynamicGraph
 from utils.shift_segments import (
     MS_PER_DAY,
     filter_df_by_segment,
@@ -387,3 +389,158 @@ class NetFlowDataset:
     @property
     def num_nodes(self):
         return self.train_graph.num_nodes
+
+
+class StreamingNetFlowDataset:
+    TIMESTAMP_COL = "FLOW_START_MILLISECONDS"
+
+    def __init__(
+        self,
+        name: str,
+        data_dir: str,
+        force_reload: bool = False,
+        fraction: Optional[float] = None,
+        data_type: str = "benign",
+        seed: int = 42,
+        split_mode: str = "stratified",
+        distribution_segment: str = "pre_shift",
+        window_size_ms: int = 3600000,
+        stride_ms: int = 1800000,
+    ):
+        self.name = name
+        self.data_dir = data_dir
+        self.fraction = fraction
+        self.data_type = data_type
+        self.seed = seed
+        self.window_size_ms = window_size_ms
+        self.stride_ms = stride_ms
+
+        self.dynamic_graph: Optional[DynamicGraph] = None
+        self.windows: List[Data] = []
+        self.feature_names: List[str] = []
+
+        raw_dir = os.path.join(data_dir, name)
+        df = pd.read_csv(os.path.join(raw_dir, f"{name}.csv"))
+
+        if self.fraction is not None:
+            df = df.groupby(by="Attack").sample(
+                frac=self.fraction, random_state=self.seed
+            )
+
+        x = df.drop(columns=["Attack", "Label"])
+        x = x.replace([np.inf, -np.inf], np.nan)
+        x = x.fillna(0)
+        y = df[["Attack", "Label"]]
+        df = pd.concat([x, y], axis=1)
+
+        if self.data_type == "benign":
+            df = df[df["Label"] == 0].copy()
+
+        self._process_windows(df)
+
+    def _process_windows(self, df: pd.DataFrame):
+        df = df.sort_values(by=self.TIMESTAMP_COL).reset_index(drop=True)
+
+        if "v3" in self.name:
+            edge_features = [
+                col
+                for col in df.columns
+                if col
+                not in [
+                    "IPV4_SRC_ADDR",
+                    "IPV4_DST_ADDR",
+                    "FLOW_END_MILLISECONDS",
+                    "FLOW_START_MILLISECONDS",
+                    "Attack",
+                    "Label",
+                ]
+            ]
+        else:
+            edge_features = [
+                col
+                for col in df.columns
+                if col not in ["IPV4_SRC_ADDR", "IPV4_DST_ADDR", "Attack", "Label"]
+            ]
+
+        self.feature_names = edge_features
+
+        self.dynamic_graph = DynamicGraph(
+            edge_feature_dim=len(edge_features),
+            feature_names=edge_features,
+        )
+
+        min_ts = df[self.TIMESTAMP_COL].min()
+        max_ts = df[self.TIMESTAMP_COL].max()
+
+        window_start = int(min_ts)
+        while window_start <= int(max_ts):
+            window_end = window_start + self.window_size_ms
+            window_df = df[
+                (df[self.TIMESTAMP_COL] >= window_start)
+                & (df[self.TIMESTAMP_COL] < window_end)
+            ]
+            if not window_df.empty:
+                self.dynamic_graph.add_edges_batch(
+                    window_df,
+                    timestamp_col=self.TIMESTAMP_COL,
+                    src_col="IPV4_SRC_ADDR",
+                    dst_col="IPV4_DST_ADDR",
+                    feature_cols=edge_features,
+                )
+                snapshot = self.dynamic_graph.get_snapshot(
+                    float(window_start), float(window_end)
+                )
+                self.windows.append(snapshot)
+            window_start += self.stride_ms
+
+    @property
+    def train_graph(self) -> Optional[Data]:
+        if self.windows:
+            return self.windows[0]
+        return None
+
+    @property
+    def val_graph(self) -> Optional[Data]:
+        if self.windows:
+            return self.windows[0]
+        return None
+
+    @property
+    def test_graph(self) -> Optional[Data]:
+        if self.windows:
+            return self.windows[0]
+        return None
+
+    @property
+    def num_windows(self) -> int:
+        return len(self.windows)
+
+    def get_window(self, i: int) -> Data:
+        return self.windows[i]
+
+    def add_flows(self, df: pd.DataFrame) -> int:
+        n_before = len(self.windows)
+        self.dynamic_graph.add_edges_batch(
+            df,
+            timestamp_col=self.TIMESTAMP_COL,
+            src_col="IPV4_SRC_ADDR",
+            dst_col="IPV4_DST_ADDR",
+            feature_cols=self.feature_names,
+        )
+        min_ts = df[self.TIMESTAMP_COL].min()
+        max_ts = df[self.TIMESTAMP_COL].max()
+        window_start = int(min_ts)
+        while window_start <= int(max_ts):
+            window_end = window_start + self.window_size_ms
+            already_have = any(
+                abs(w.edge_index.shape[1] - self.windows[i].edge_index.shape[1]) < 0.1
+                for i, w in enumerate(self.windows)
+            )
+            if not already_have:
+                snapshot = self.dynamic_graph.get_snapshot(
+                    float(window_start), float(window_end)
+                )
+                if snapshot.num_nodes > 0:
+                    self.windows.append(snapshot)
+            window_start += self.stride_ms
+        return len(self.windows) - n_before

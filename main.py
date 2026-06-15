@@ -7,13 +7,19 @@ import numpy as np
 import torch
 import wandb
 import yaml
-from sklearn.metrics import precision_recall_curve
+from sklearn.metrics import f1_score, precision_recall_curve
 from torch_geometric.loader import LinkNeighborLoader
 
 from models.graphids import GraphIDS
-from utils.dataloaders import NetFlowDataset
+from utils.dataloaders import NetFlowDataset, StreamingNetFlowDataset
 from utils.parser import Parser
-from utils.trainers import test, train
+from utils.trainers import (
+    test,
+    train,
+    train_online,
+    train_temporal_windows,
+    update_threshold_online,
+)
 
 # Suppress this warning: even if in prototype stage, it works correctly for our use case
 warnings.filterwarnings(
@@ -468,7 +474,136 @@ def train_model(
     )
 
 
+def run_streaming(args):
+    config = build_wandb_config(args)
+    if not args.wandb:
+        os.environ["WANDB_MODE"] = "offline"
+    run = wandb.init(project="GraphIDS", config=config)
+    apply_cli_config(run.config, args)
+    ensure_config_keys(run.config)
+    config = run.config
+
+    set_seed(config.seed)
+
+    dataset = StreamingNetFlowDataset(
+        name=config.dataset,
+        data_dir=config.data_dir,
+        force_reload=config.reload_dataset,
+        fraction=config.fraction,
+        data_type=config.data_type,
+        seed=config.seed,
+    )
+
+    edim_in = dataset.windows[0].edge_attr.size(1)
+    ndim_in = dataset.windows[0].x.size(1)
+
+    model = GraphIDS(
+        ndim_in=ndim_in,
+        edim_in=edim_in,
+        edim_out=config.edim_out,
+        embed_dim=config.ae_embedding_dim,
+        num_heads=4,
+        num_layers=config.num_layers,
+        window_size=config.window_size,
+        dropout=config.dropout,
+        ae_dropout=config.ae_dropout,
+        positional_encoding=config.positional_encoding,
+        agg_type=config.agg_type,
+        mask_ratio=config.mask_ratio,
+    ).to(device)
+
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": model.encoder.parameters(), "weight_decay": config.weight_decay},
+            {
+                "params": model.transformer.parameters(),
+                "weight_decay": config.ae_weight_decay,
+            },
+        ],
+        lr=config.learning_rate,
+    )
+
+    fanout_list = [config.fanout] if config.fanout != -1 else [-1]
+    shuffle = config.positional_encoding == "None"
+    num_windows = dataset.num_windows
+    split_idx = int(num_windows * 0.6)
+
+    print(f"Total temporal windows: {num_windows}")
+    print(f"Initial training on first {split_idx} windows")
+
+    for i in range(split_idx):
+        window_data = dataset.get_window(i)
+        loader = LinkNeighborLoader(
+            data=window_data,
+            num_neighbors=fanout_list,
+            edge_label_index=window_data.edge_index,
+            edge_label=window_data.edge_labels,
+            batch_size=config.batch_size,
+            shuffle=shuffle,
+            drop_last=True,
+        )
+        model, _, _ = train(
+            model,
+            config.window_size,
+            config.step_percent,
+            config.ae_batch_size,
+            loader,
+            loader,
+            0,
+            max(5, config.num_epochs // num_windows),
+            optimizer,
+            run,
+            config.patience,
+            None,
+            device=device,
+        )
+
+    replay_buffer = [dataset.get_window(i) for i in range(split_idx)]
+    threshold = None
+
+    print(f"Streaming evaluation on remaining {num_windows - split_idx} windows")
+    for i in range(split_idx, num_windows):
+        window_data = dataset.get_window(i)
+        val_loader = LinkNeighborLoader(
+            data=window_data,
+            num_neighbors=fanout_list,
+            edge_label_index=window_data.edge_index,
+            edge_label=window_data.edge_labels,
+            batch_size=config.batch_size,
+            shuffle=False,
+            drop_last=False,
+        )
+
+        _, errors, labels = validate(
+            model, val_loader, config.ae_batch_size, config.window_size, device
+        )
+
+        threshold = update_threshold_online(
+            errors,
+            labels,
+            method="validation_f1",
+            prev_threshold=threshold,
+            alpha=0.1,
+        )
+
+        preds = (errors > threshold).int()
+        f1 = f1_score(labels.cpu(), preds.cpu(), average="macro", zero_division=0)
+        pr_auc = average_precision_score(labels.cpu(), errors.cpu())
+
+        run.log({
+            f"stream_window_{i}_f1": f1,
+            f"stream_window_{i}_pr_auc": pr_auc,
+            f"stream_window_{i}_threshold": threshold,
+        })
+
+    run.finish()
+    return model
+
+
 def main(run, args):
+    if args.streaming:
+        return run_streaming(args)
+
     config = run.config
     print(config)
 

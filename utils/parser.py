@@ -216,6 +216,11 @@ class Parser(argparse.ArgumentParser):
             "--test", action="store_true", help="If true, don't train the model"
         )
         self.add_argument(
+            "--streaming",
+            action="store_true",
+            help="Run in streaming/online mode",
+        )
+        self.add_argument(
             "--reload_dataset",
             action="store_true",
             help="If true, force reload the dataset",

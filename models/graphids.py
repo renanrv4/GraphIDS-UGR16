@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
+from typing import Optional
 from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import scatter
+from torch_geometric.data import Data
 
 
 class SAGELayer(MessagePassing):
@@ -19,49 +21,42 @@ class SAGELayer(MessagePassing):
         nn.init.xavier_normal_(self.fc_neigh.weight, gain=gain)
         nn.init.xavier_normal_(self.fc_edge.weight, gain=gain)
 
-    def message(self, edge_attr):  # type: ignore[override]
-        """
-        Copy edge features as messages.
-        DGL equivalent: fn.copy_e("h", "m")
-        """
+    def message(self, edge_attr, edge_temporal_weights=None):  # type: ignore[override]
+        if edge_temporal_weights is not None:
+            return edge_attr * edge_temporal_weights.unsqueeze(-1)
         return edge_attr
 
     def aggregate(self, inputs, index, ptr=None, dim_size=None):
-        """
-        Aggregate edge features to destination nodes using mean aggregation.
-        DGL equivalent: fn.mean("m", "h_neigh")
-        """
         return scatter(
             inputs, index, dim=self.node_dim, dim_size=dim_size, reduce="mean"
         )
 
-    def forward(self, edge_index, edge_attr, edge_couples, num_nodes):
-        """
-        Aggregate edge features to nodes, then compute edge embeddings.
+    def forward(
+        self,
+        edge_index,
+        edge_attr,
+        edge_couples,
+        num_nodes,
+        temporal_weights: Optional[torch.Tensor] = None,
+        node_mask: Optional[torch.Tensor] = None,
+    ):
+        if node_mask is not None:
+            src, dst = edge_index[0], edge_index[1]
+            mask_src = (src.view(-1, 1) == node_mask.view(1, -1)).any(dim=1)
+            mask_dst = (dst.view(-1, 1) == node_mask.view(1, -1)).any(dim=1)
+            edge_mask = mask_src | mask_dst
+            edge_index = edge_index[:, edge_mask]
+            edge_attr = edge_attr[edge_mask]
+            if temporal_weights is not None:
+                temporal_weights = temporal_weights[edge_mask]
 
-        Args:
-            edge_index: Edge connectivity [2, num_edges]
-            edge_attr: Edge features [num_edges, edim_in] - the actual input data
-            edge_couples: Target edge pairs [batch_size, 2] - edges to embed
-            num_nodes: Number of nodes in the graph
-
-        Returns:
-            edge_embeddings: [batch_size, edim_out] - final edge representations
-
-        Process:
-            1. Aggregate edge features to nodes (mean of incoming edges)
-            2. Transform aggregated features: fc_neigh + ReLU
-            3. For target edges: concat source & dest node embeddings
-            4. Project to final edge embeddings: fc_edge + dropout
-        """
-        # Aggregate edge features to nodes (DGL: fn.copy_e + fn.mean)
         node_embeddings = self.propagate(  # type: ignore
-            edge_index, edge_attr=edge_attr, size=(num_nodes, num_nodes)
+            edge_index, edge_attr=edge_attr, size=(num_nodes, num_nodes),
+            edge_temporal_weights=temporal_weights
         )
-        # Transform aggregated features and activate
+        node_embeddings = torch.nan_to_num(node_embeddings, nan=0.0)
         node_embeddings = self.relu(self.fc_neigh(node_embeddings))
 
-        # Compute edge embeddings from concatenated source and destination node embeddings
         edge_embeddings = self.fc_edge(
             torch.cat(
                 [
@@ -159,7 +154,6 @@ class TransformerAutoencoder(nn.Module):
     def forward(self, src, padding_mask=None):
         src = self.input_projection(src)
 
-        # Identity function if no positional encoding is used
         src = self.positional_encoder(src)
 
         src_key_padding_mask = None
@@ -197,6 +191,43 @@ class TransformerAutoencoder(nn.Module):
         return output
 
 
+class ColdStartNodeInitializer:
+    def __init__(self, ndim: int, strategy: str = "neighbor_mean"):
+        self.ndim = ndim
+        self.strategy = strategy
+        self.default_embedding: Optional[torch.nn.Parameter] = None
+        if strategy == "default_embedding":
+            self.default_embedding = torch.nn.Parameter(torch.zeros(ndim))
+            torch.nn.init.xavier_uniform_(self.default_embedding.unsqueeze(0))
+
+    def initialize_nodes(
+        self,
+        node_ids: torch.Tensor,
+        node_embeddings: torch.Tensor,
+        edge_index: torch.Tensor,
+        num_nodes: int,
+    ) -> torch.Tensor:
+        result = node_embeddings.clone()
+        for nid in node_ids:
+            nid_int = nid.item()
+            if self.strategy == "neighbor_mean":
+                neighbors = []
+                mask = edge_index[0] == nid_int
+                neighbors.extend(edge_index[1, mask].tolist())
+                mask = edge_index[1] == nid_int
+                neighbors.extend(edge_index[0, mask].tolist())
+                if neighbors:
+                    valid_neighbors = [n for n in neighbors if n < len(node_embeddings) and not torch.isnan(node_embeddings[n]).any()]
+                    if valid_neighbors:
+                        result[nid_int] = node_embeddings[valid_neighbors].mean(dim=0)
+                        continue
+            if self.default_embedding is not None:
+                result[nid_int] = self.default_embedding
+            elif torch.isnan(result[nid_int]).any():
+                result[nid_int] = torch.zeros(self.ndim, device=result.device)
+        return result
+
+
 class GraphIDS(nn.Module):
     def __init__(
         self,
@@ -225,6 +256,38 @@ class GraphIDS(nn.Module):
             positional_encoding,
             mask_ratio,
         )
+        self.node_initializer = ColdStartNodeInitializer(edim_out)
+
+    def forward(
+        self,
+        edge_index,
+        edge_attr,
+        edge_couples,
+        num_nodes,
+        temporal_weights=None,
+        node_mask=None,
+    ):
+        edge_emb = self.encoder(
+            edge_index, edge_attr, edge_couples, num_nodes,
+            temporal_weights=temporal_weights,
+            node_mask=node_mask,
+        )
+        return edge_emb
+
+    def encode_edges(
+        self,
+        dynamic_graph_data: Data,
+        edge_couples: torch.Tensor,
+        temporal_weights: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        edge_emb = self.encoder(
+            dynamic_graph_data.edge_index,
+            dynamic_graph_data.edge_attr,
+            edge_couples,
+            dynamic_graph_data.num_nodes,
+            temporal_weights=temporal_weights,
+        )
+        return edge_emb
 
     def save_checkpoint(self, path, optimizer=None, epoch=0, threshold=None):
         checkpoint = {

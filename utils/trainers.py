@@ -1,9 +1,14 @@
+import os
+import random
 import time
+from collections import deque
 
 import torch
 import torch.nn as nn
 from sklearn.metrics import average_precision_score, f1_score
 from torch.utils.data import DataLoader
+from torch_geometric.data import Data
+from torch_geometric.loader import LinkNeighborLoader
 from tqdm import tqdm
 
 from utils.dataloaders import SequentialDataset, collate_fn
@@ -240,3 +245,285 @@ def test(model, test_loader, ae_batch_size, window_size, device, threshold):
     f1 = f1_score(labels, test_pred, average="macro", zero_division=0)
     pr_auc = average_precision_score(labels, errors)
     return f1, pr_auc, errors, labels, prediction_time
+
+
+def train_online(
+    model,
+    new_data,
+    replay_buffer,
+    window_size,
+    step_percent,
+    ae_batch_size,
+    optimizer,
+    num_steps=1,
+    batch_size=16384,
+    fanout=-1,
+    device="cuda",
+):
+    criterion = nn.MSELoss(reduction="none")
+    fanout_list = [fanout] if fanout != -1 else [-1]
+
+    new_iter = iter(LinkNeighborLoader(
+        data=new_data,
+        num_neighbors=fanout_list,
+        edge_label_index=new_data.edge_index,
+        edge_label=new_data.edge_labels,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=True,
+    ))
+
+    losses = []
+    model.train()
+
+    for step in range(num_steps):
+        try:
+            batch = next(new_iter)
+        except StopIteration:
+            new_iter = iter(LinkNeighborLoader(
+                data=new_data,
+                num_neighbors=fanout_list,
+                edge_label_index=new_data.edge_index,
+                edge_label=new_data.edge_labels,
+                batch_size=batch_size,
+                shuffle=True,
+                drop_last=True,
+            ))
+            batch = next(new_iter)
+
+        batch.batch_edge_couples = batch.edge_label_index.t()
+        batch = batch.to(device)
+
+        train_emb = model.encoder(
+            batch.edge_index,
+            batch.edge_attr,
+            batch.batch_edge_couples,
+            batch.num_nodes,
+        )
+
+        ae_train_loader = DataLoader(
+            SequentialDataset(
+                train_emb,
+                window=window_size,
+                step=int(window_size * step_percent),
+                device=device,
+            ),
+            batch_size=ae_batch_size,
+            collate_fn=collate_fn,
+        )
+
+        new_loss = torch.tensor(0.0, device=device)
+        seq_count = 0
+        for ae_batch, mask in ae_train_loader:
+            outputs = model.transformer(ae_batch, mask)
+            loss = criterion(outputs, ae_batch)
+            loss = torch.sum(loss * mask) / torch.sum(mask)
+            new_loss += loss
+            seq_count += 1
+        if seq_count > 0:
+            new_loss = new_loss / seq_count
+
+        replay_loss = torch.tensor(0.0, device=device)
+        if replay_buffer:
+            replay_data = random.choice(replay_buffer)
+            replay_loader = LinkNeighborLoader(
+                data=replay_data,
+                num_neighbors=fanout_list,
+                edge_label_index=replay_data.edge_index,
+                edge_label=replay_data.edge_labels,
+                batch_size=batch_size,
+                shuffle=True,
+                drop_last=True,
+            )
+            for rbatch in replay_loader:
+                rbatch.batch_edge_couples = rbatch.edge_label_index.t()
+                rbatch = rbatch.to(device)
+
+                remb = model.encoder(
+                    rbatch.edge_index,
+                    rbatch.edge_attr,
+                    rbatch.batch_edge_couples,
+                    rbatch.num_nodes,
+                )
+
+                rae_loader = DataLoader(
+                    SequentialDataset(
+                        remb,
+                        window=window_size,
+                        step=int(window_size * step_percent),
+                        device=device,
+                    ),
+                    batch_size=ae_batch_size,
+                    collate_fn=collate_fn,
+                )
+
+                rloss = torch.tensor(0.0, device=device)
+                rcount = 0
+                for rae_batch, rmask in rae_loader:
+                    routputs = model.transformer(rae_batch, rmask)
+                    rl = criterion(routputs, rae_batch)
+                    rl = torch.sum(rl * rmask) / torch.sum(rmask)
+                    rloss += rl
+                    rcount += 1
+                if rcount > 0:
+                    replay_loss = rloss / rcount
+                break
+
+        total_loss = new_loss + replay_loss
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+        optimizer.zero_grad()
+
+        losses.append(total_loss.item())
+
+    return model, losses
+
+
+def train_temporal_windows(
+    model,
+    dataset,
+    window_size,
+    step_percent,
+    ae_batch_size,
+    num_epochs_per_window,
+    optimizer,
+    run,
+    patience,
+    checkpoint,
+    replay_capacity=5,
+    batch_size=16384,
+    fanout=-1,
+    device="cuda",
+):
+    replay_buffer = deque(maxlen=replay_capacity)
+    best_pr_auc = -float("inf")
+    cnt_wait = 0
+    fanout_list = [fanout] if fanout != -1 else [-1]
+    criterion = nn.MSELoss(reduction="none")
+
+    num_windows = dataset.num_windows
+
+    for window_idx in range(num_windows):
+        window_data = dataset.get_window(window_idx)
+        print(f"Training on window {window_idx + 1}/{num_windows}")
+
+        train_loader = LinkNeighborLoader(
+            data=window_data,
+            num_neighbors=fanout_list,
+            edge_label_index=window_data.edge_index,
+            edge_label=window_data.edge_labels,
+            batch_size=batch_size,
+            shuffle=True,
+            drop_last=True,
+        )
+
+        for epoch in range(1, num_epochs_per_window + 1):
+            total_train_loss = 0
+            model.train()
+            for batch in train_loader:
+                batch.batch_edge_couples = batch.edge_label_index.t()
+                batch = batch.to(device)
+
+                train_emb = model.encoder(
+                    batch.edge_index,
+                    batch.edge_attr,
+                    batch.batch_edge_couples,
+                    batch.num_nodes,
+                )
+
+                ae_train_loader = DataLoader(
+                    SequentialDataset(
+                        train_emb,
+                        window=window_size,
+                        step=int(window_size * step_percent),
+                        device=device,
+                    ),
+                    batch_size=ae_batch_size,
+                    collate_fn=collate_fn,
+                )
+
+                accumulated_loss = torch.tensor(0.0, device=device)
+                seq_count = 0
+                for ae_batch, mask in ae_train_loader:
+                    outputs = model.transformer(ae_batch, mask)
+                    loss = criterion(outputs, ae_batch)
+                    loss = torch.sum(loss * mask) / torch.sum(mask)
+                    accumulated_loss += loss
+                    seq_count += 1
+
+                if seq_count > 0:
+                    loss = accumulated_loss / seq_count
+                    total_train_loss += loss.item()
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+            total_train_loss /= len(train_loader)
+
+            if window_idx + 1 < num_windows:
+                val_data = dataset.get_window(window_idx + 1)
+                val_loader = LinkNeighborLoader(
+                    data=val_data,
+                    num_neighbors=fanout_list,
+                    edge_label_index=val_data.edge_index,
+                    edge_label=val_data.edge_labels,
+                    batch_size=batch_size,
+                    shuffle=False,
+                    drop_last=False,
+                )
+                val_loss, val_errors, val_labels = validate(
+                    model, val_loader, ae_batch_size, window_size, device
+                )
+                val_pr_auc = average_precision_score(val_labels.cpu(), val_errors.cpu())
+                threshold = find_threshold(val_errors, val_labels, method="validation_f1")
+
+                if val_pr_auc >= best_pr_auc:
+                    model.save_checkpoint(
+                        checkpoint,
+                        optimizer=optimizer,
+                        epoch=epoch,
+                        threshold=threshold,
+                    )
+
+                if val_pr_auc > best_pr_auc:
+                    best_pr_auc = val_pr_auc
+                    cnt_wait = 0
+                else:
+                    cnt_wait += 1
+
+                run.log({
+                    f"window_{window_idx}_train_loss": total_train_loss,
+                    f"window_{window_idx}_val_loss": val_loss,
+                    f"window_{window_idx}_val_pr_auc": val_pr_auc,
+                })
+
+                if cnt_wait >= patience:
+                    print(f"Early stopping at window {window_idx + 1}")
+                    break
+            else:
+                run.log({
+                    f"window_{window_idx}_train_loss": total_train_loss,
+                })
+
+        replay_buffer.append(window_data)
+
+    if os.path.exists(checkpoint):
+        chk = torch.load(checkpoint, weights_only=True)
+        model.load_state_dict(chk["model_state_dict"])
+    return model
+
+
+def update_threshold_online(
+    errors,
+    labels=None,
+    method="unsupervised",
+    multiplier=10.0,
+    prev_threshold=None,
+    alpha=0.1,
+):
+    computed = find_threshold(errors, labels, method, multiplier)
+    if prev_threshold is not None:
+        return alpha * computed + (1 - alpha) * prev_threshold
+    return computed
