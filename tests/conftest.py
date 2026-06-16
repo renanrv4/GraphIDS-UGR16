@@ -226,7 +226,7 @@ def trained_bundle(toy_dataset):
     val_loader = _make_loader(dataset.val_graph, batch_size=2, drop_last=False)
     test_loader = _make_loader(dataset.test_graph, batch_size=2, drop_last=False)
 
-    model, threshold = train(
+    model, threshold, _val_pr_auc = train(
         model,
         window_size=4,
         step_percent=1.0,

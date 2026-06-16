@@ -74,13 +74,15 @@ def train(
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
                 optimizer.zero_grad()
-        total_train_loss /= len(train_loader)
+        total_train_loss /= max(len(train_loader), 1)
         val_loss, val_errors, val_labels = validate(
             model, val_loader, ae_batch_size, window_size, device
         )
-        val_pr_auc = average_precision_score(val_labels.cpu(), val_errors.cpu())
-        # Choose the operating threshold on the labeled validation split.
-        threshold = find_threshold(val_errors, val_labels, method="validation_f1")
+        val_pr_auc = 0.0
+        threshold = 0.0
+        if val_labels.numel() > 0:
+            val_pr_auc = average_precision_score(val_labels.cpu(), val_errors.cpu())
+            threshold = find_threshold(val_errors, val_labels, method="validation_f1")
 
         # Keep saving the model if it produces the same or better validation PR-AUC
         if val_pr_auc >= best_pr_auc:
@@ -115,9 +117,12 @@ def train(
         if cnt_wait >= patience:
             print("Early stopping!")
             break
-    chk = torch.load(checkpoint, weights_only=True)
-    model.load_state_dict(chk["model_state_dict"])
-    return model, chk["threshold"], val_pr_auc
+    threshold = 0.0
+    if checkpoint is not None:
+        chk = torch.load(checkpoint, weights_only=True)
+        model.load_state_dict(chk["model_state_dict"])
+        threshold = chk["threshold"]
+    return model, threshold, val_pr_auc
 
 
 def find_threshold(errors, labels=None, method="unsupervised", multiplier=10.0):
@@ -173,6 +178,8 @@ def _collect_errors_and_labels(
     errors = []
     labels = []
     total_loss = 0
+    if len(loader) == 0:
+        return total_loss, torch.empty(0), torch.empty(0)
     with torch.inference_mode():
         for batch in loader:
             batch.batch_edge_couples = batch.edge_label_index.t()
@@ -235,6 +242,8 @@ def test(model, test_loader, ae_batch_size, window_size, device, threshold):
         window_size,
         device,
     )
+    if labels.numel() == 0:
+        return 0.0, 0.0, errors, labels, 0.0
     if threshold is not None:
         test_pred = (errors > threshold).int()
     else:

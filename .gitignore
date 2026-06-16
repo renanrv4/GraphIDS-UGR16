@@ -13,3 +13,4 @@ checkpoints
 scalers
 data/
 .venv
+/docs

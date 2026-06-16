@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import wandb
 import yaml
-from sklearn.metrics import f1_score, precision_recall_curve
+from sklearn.metrics import average_precision_score, f1_score, precision_recall_curve
 from torch_geometric.loader import LinkNeighborLoader
 
 import patch_pyg
@@ -22,6 +22,7 @@ from utils.trainers import (
     train_online,
     train_temporal_windows,
     update_threshold_online,
+    validate,
 )
 
 # Suppress this warning: even if in prototype stage, it works correctly for our use case
@@ -462,13 +463,14 @@ def train_model(
     )
 
 
-def run_streaming(args):
-    config = build_wandb_config(args)
-    if not args.wandb:
-        os.environ["WANDB_MODE"] = "offline"
-    run = wandb.init(project="GraphIDS", config=config)
-    apply_cli_config(run.config, args)
-    ensure_config_keys(run.config)
+def run_streaming(args, run=None):
+    if run is None:
+        config = build_wandb_config(args)
+        if not args.wandb:
+            os.environ["WANDB_MODE"] = "offline"
+        run = wandb.init(project="GraphIDS", config=config)
+        apply_cli_config(run.config, args)
+        ensure_config_keys(run.config)
     config = run.config
 
     set_seed(config.seed)
@@ -590,7 +592,7 @@ def run_streaming(args):
 
 def main(run, args):
     if args.streaming:
-        return run_streaming(args)
+        return run_streaming(args, run=run)
 
     config = run.config
     print(config)

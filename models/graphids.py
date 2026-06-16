@@ -290,6 +290,8 @@ class GraphIDS(nn.Module):
         return edge_emb
 
     def save_checkpoint(self, path, optimizer=None, epoch=0, threshold=None):
+        if path is None:
+            return
         checkpoint = {
             "model_state_dict": self.state_dict(),
             "epoch": epoch,
